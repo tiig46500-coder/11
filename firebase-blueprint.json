@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile containing anonymous info, streaks, and collected items",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID" },
+        "anonymousName": { "type": "string", "description": "Display name" },
+        "avatarGradient": { "type": "string", "description": "CSS gradient string for avatar" },
+        "streak": { "type": "number", "description": "Daily activity streak count" },
+        "karmaXP": { "type": "number", "description": "Karma XP points earned" },
+        "collectedItems": { "type": "array", "description": "List of collected energy items" },
+        "collectedCount": { "type": "number", "description": "Total count of collected items" },
+        "createdMessagesCount": { "type": "number", "description": "Total count of created messages" },
+        "updatedAt": { "type": "string", "description": "Last update timestamp" }
+      },
+      "required": ["uid", "anonymousName"]
+    },
+    "CommunityMessage": {
+      "title": "Community Message",
+      "description": "Public or private message shared in the community space",
+      "type": "object",
+      "properties": {
+        "content": { "type": "string", "description": "Message body text", "maxLength": 1000 },
+        "authorName": { "type": "string", "description": "Author anonymous display name" },
+        "authorUid": { "type": "string", "description": "Author UID" },
+        "color": { "type": "string", "description": "Card styling color class" },
+        "rotation": { "type": "string", "description": "Card rotation class" },
+        "energyCount": { "type": "number", "description": "Energy reaction count" },
+        "hugCount": { "type": "number", "description": "Hug reaction count" },
+        "shineCount": { "type": "number", "description": "Shine reaction count" },
+        "collectCount": { "type": "number", "description": "Collection count" },
+        "energyItem": { "type": "object", "description": "Associated energy item artifact" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "isPublic": { "type": "boolean", "description": "Visibility flag" },
+        "tags": { "type": "array", "description": "List of tags" }
+      },
+      "required": ["content", "authorName", "authorUid"]
+    },
+    "CommunityStats": {
+      "title": "Community Global Stats",
+      "description": "Global aggregated stats for community interactions",
+      "type": "object",
+      "properties": {
+        "totalMessages": { "type": "number" },
+        "totalHugs": { "type": "number" },
+        "totalShines": { "type": "number" },
+        "totalCollected": { "type": "number" },
+        "totalEnergy": { "type": "number" },
+        "totalStars4D": { "type": "number" },
+        "lastUpdated": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile collection"
+    },
+    "/community_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/CommunityMessage" },
+      "description": "Community messages collection"
+    },
+    "/community_stats/{statId}": {
+      "schema": { "$ref": "#/entities/CommunityStats" },
+      "description": "Global community aggregated statistics"
+    }
+  }
+}

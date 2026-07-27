@@ -1,0 +1,1221 @@
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import { 
+  BookOpen, 
+  Mail, 
+  Lock, 
+  Unlock, 
+  Send, 
+  Calendar, 
+  RefreshCw, 
+  Clock, 
+  Check, 
+  Trash2, 
+  Sparkles, 
+  Heart,
+  ChevronRight,
+  Bookmark,
+  Download,
+  FileText,
+  Copy,
+  FileDown,
+  X,
+  Share2
+} from "lucide-react";
+import { useUserData, ReflectionLog, FutureLetter } from "../context/UserContext";
+import { useToast } from "../context/ToastContext";
+import { HEALING_QUOTES, HealingQuote } from "../data";
+
+interface Prompt {
+  id: number;
+  text: string;
+}
+
+const DAILY_PROMPTS: Prompt[] = [
+  { id: 1, text: "Điều gì đã làm cậu mỉm cười mộc mạc nhất trong ngày hôm nay?" },
+  { id: 2, text: "Nếu được gửi một lời nhắn nhủ chân thành cho chính mình của một năm trước, cậu sẽ viết gì?" },
+  { id: 3, text: "Một áp lực hay nỗi buồn thầm kín nào đang đè nặng lồng ngực cậu lúc này? Trút ra trang giấy nhé." },
+  { id: 4, text: "Ai là người cậu muốn gửi lời cảm ơn thầm lặng nhất hôm nay? Vì lý do gì?" },
+  { id: 5, text: "Mô tả một khoảng lặng bình yên cậu cảm nhận ngoài đời thực hôm nay (một ngọn gió, một tách trà, tiếng lá rụng...)." },
+  { id: 6, text: "Ngày hôm nay, cậu tự hào về điều mộc mạc nào nhất của bản thân? Dù chỉ là uống đủ nước." }
+];
+
+interface JournalingProps {
+  initialTab?: "daily" | "future";
+}
+
+export default function Journaling({ initialTab }: JournalingProps) {
+  const { userData, addReflection, deleteReflection, addFutureLetter, deleteFutureLetter, addXP } = useUserData();
+  const { showToast } = useToast();
+  const reflections = userData.reflections || [];
+  const futureLetters = userData.futureLetters || [];
+
+  // Reflections state
+  const [currentPromptIdx, setCurrentPromptIdx] = useState(0);
+  const [reflectionInput, setReflectionInput] = useState("");
+
+  // Future Letters state
+  const [letterContent, setLetterContent] = useState("");
+  const [releaseTimeline, setReleaseTimeline] = useState("7"); // Days
+  
+  // Animation states
+  const [isSealing, setIsSealing] = useState(false);
+  const [activeTab, setActiveTab] = useState<"daily" | "future">(initialTab || "daily");
+
+  // Deletion and toast states
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteType, setDeleteType] = useState<"reflection" | "letter" | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Export modal & copied state
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [copiedSummary, setCopiedSummary] = useState(false);
+
+  // Export helper functions
+  const handleExportPdf = () => {
+    const userName = userData.name || "Bạn nhỏ CoreZ";
+    const now = new Date().toLocaleString("vi-VN");
+
+    let reflectionsHtml = "";
+    if (reflections.length === 0) {
+      reflectionsHtml = `<p class="empty-text">(Chưa có bài phản tư nào được lưu)</p>`;
+    } else {
+      reflectionsHtml = reflections.map((ref, idx) => `
+        <div class="entry-card">
+          <div class="entry-header">
+            <span class="entry-index">Bài phản tư #${idx + 1}</span>
+            <span class="entry-date">📅 Ngày ghi: ${ref.date}</span>
+          </div>
+          <div class="entry-prompt"><strong>Câu hỏi gợi mở:</strong> ${ref.promptText}</div>
+          <div class="entry-content">${(ref.answerText || '').replace(/\n/g, '<br/>')}</div>
+        </div>
+      `).join('');
+    }
+
+    let lettersHtml = "";
+    if (futureLetters.length === 0) {
+      lettersHtml = `<p class="empty-text">(Chưa có bức thư tương lai nào được lưu)</p>`;
+    } else {
+      lettersHtml = futureLetters.map((letItem, idx) => {
+        const unlocked = isLetterUnlocked(letItem.unlockDate);
+        return `
+          <div class="entry-card ${unlocked ? '' : 'locked-card'}">
+            <div class="entry-header">
+              <span class="entry-index">Thư thời gian #${idx + 1}</span>
+              <span class="entry-date">✍️ Viết: ${letItem.writeDate} | ⏳ Mở: ${letItem.releaseTimelineLabel}</span>
+            </div>
+            <div class="entry-status">${unlocked ? '🔓 Trạng thái: Đã mở khóa sáp' : '🔒 Trạng thái: Đang niêm phong sáp ong'}</div>
+            <div class="entry-content">${unlocked ? (letItem.content || '').replace(/\n/g, '<br/>') : '<em>[Nội dung đang được niêm phong sáp ong, sẽ mở khóa sau khi tới hạn]</em>'}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      setToastMessage("Vui lòng cho phép bật cửa sổ pop-up để xuất file PDF!");
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="vi">
+      <head>
+        <meta charset="UTF-8">
+        <title>Nhat_Ky_CoreZ_${userName.replace(/\s+/g, '_')}</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,400&display=swap');
+          * { box-sizing: border-box; }
+          body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            color: #1e293b;
+            margin: 0;
+            padding: 40px;
+            background: #ffffff;
+            line-height: 1.6;
+          }
+          .header {
+            text-align: center;
+            border-bottom: 2px solid #10b981;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+          }
+          .brand-title {
+            font-family: 'Playfair Display', serif;
+            font-size: 26px;
+            color: #065f46;
+            margin: 0 0 6px 0;
+            font-weight: 700;
+          }
+          .sub-title {
+            font-size: 13px;
+            color: #059669;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 700;
+          }
+          .meta-box {
+            background: #f0fdf4;
+            border: 1px solid #a7f3d0;
+            border-radius: 12px;
+            padding: 12px 20px;
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #047857;
+            flex-wrap: wrap;
+            gap: 10px;
+          }
+          .section-title {
+            font-family: 'Playfair Display', serif;
+            font-size: 20px;
+            color: #065f46;
+            margin: 30px 0 15px 0;
+            border-left: 4px solid #10b981;
+            padding-left: 12px;
+          }
+          .entry-card {
+            background: #fafafa;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 16px;
+            page-break-inside: avoid;
+          }
+          .entry-card.locked-card {
+            background: #f8fafc;
+            border-style: dashed;
+          }
+          .entry-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #64748b;
+            margin-bottom: 8px;
+            font-weight: 700;
+          }
+          .entry-index {
+            color: #059669;
+          }
+          .entry-prompt {
+            font-size: 13px;
+            color: #0f172a;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: #ffffff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid #f1f5f9;
+          }
+          .entry-status {
+            font-size: 11px;
+            color: #d97706;
+            font-weight: 600;
+            margin-bottom: 8px;
+          }
+          .entry-content {
+            font-size: 13px;
+            color: #334155;
+            white-space: pre-wrap;
+          }
+          .empty-text {
+            font-size: 12px;
+            color: #94a3b8;
+            font-style: italic;
+          }
+          .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 11px;
+            color: #94a3b8;
+            border-top: 1px solid #f1f5f9;
+            padding-top: 20px;
+          }
+          @media print {
+            body { padding: 20px; }
+            .meta-box { background: #f0fdf4 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1 class="brand-title">🌱 Nhật Ký Phản Tư & Tâm Sự • CoreZ</h1>
+          <div class="sub-title">Bản lưu trữ cá nhân xuất dưới dạng PDF</div>
+          <div class="meta-box">
+            <span>👤 Chủ sở hữu: <strong>${userName}</strong></span>
+            <span>📝 Bài phản tư: <strong>${reflections.length}</strong> | ✉️ Lá thư: <strong>${futureLetters.length}</strong></span>
+            <span>🕒 Ngày xuất: <strong>${now}</strong></span>
+          </div>
+        </div>
+
+        <div class="section-title">1. Nhật Ký Phản Tư Hàng Ngày</div>
+        ${reflectionsHtml}
+
+        <div class="section-title">2. Lá Thư Gửi Tương Lai (Time Capsule)</div>
+        ${lettersHtml}
+
+        <div class="footer">
+          "Mỗi từ ngữ cậu viết ra đều là một điểm tựa chữa lành mộc mạc." 🌿<br/>
+          Bản quyền lưu trữ cá nhân của ${userName} • Được tạo bởi ứng dụng CoreZ
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 300);
+          }
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    setToastMessage("Đã mở trình xuất file PDF thành công! 📄");
+  };
+
+  const handleExportTxt = () => {
+    const userName = userData.name || "Bạn nhỏ CoreZ";
+    const now = new Date().toLocaleString("vi-VN");
+
+    let content = `================================================
+BẢN XUẤT NHẬT KÝ PHẢN TƯ & TÂM SỰ - COREZ
+Chủ sở hữu: ${userName}
+Thời gian xuất: ${now}
+================================================\n\n`;
+
+    content += `--- I. NHẬT KÝ PHẢN TƯ HÀNG NGÀY (${reflections.length} bài) ---\n\n`;
+
+    if (reflections.length === 0) {
+      content += `(Chưa có bài phản tư nào được lưu)\n\n`;
+    } else {
+      reflections.forEach((ref, idx) => {
+        content += `[${idx + 1}] Ngày ghi: ${ref.date}\n`;
+        content += `Câu hỏi gợi mở: ${ref.promptText}\n`;
+        content += `Nội dung phản tư:\n${ref.answerText}\n`;
+        content += `------------------------------------------------\n\n`;
+      });
+    }
+
+    content += `--- II. LÁ THƯ GỬI TƯƠNG LAI (${futureLetters.length} bức thư) ---\n\n`;
+
+    if (futureLetters.length === 0) {
+      content += `(Chưa có bức thư tương lai nào được lưu)\n\n`;
+    } else {
+      futureLetters.forEach((letItem, idx) => {
+        const unlocked = isLetterUnlocked(letItem.unlockDate);
+        content += `[${idx + 1}] Viết ngày: ${letItem.writeDate} | Hẹn mở: ${letItem.releaseTimelineLabel}\n`;
+        content += `Trạng thái: ${unlocked ? "Đã mở khóa sáp" : "Đang niêm phong sáp"}\n`;
+        if (unlocked) {
+          content += `Nội dung thư:\n${letItem.content}\n`;
+        } else {
+          content += `Nội dung thư: [ĐÃ KHÓA SÁP ONG - Mở khóa sau khi tới hạn]\n`;
+        }
+        content += `------------------------------------------------\n\n`;
+      });
+    }
+
+    content += `\n* Bản quyền thuộc về ${userName}. Cảm ơn cậu đã đồng hành cùng CoreZ để nuôi dưỡng sự bình yên đời thực! 🌱`;
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Nhat_Ky_Phan_Tu_${userName.replace(/\s+/g, "_")}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setToastMessage("Đã tải tệp .txt nhật ký thành công! 📂");
+  };
+
+  const handleExportJson = () => {
+    const userName = userData.name || "Bạn nhỏ CoreZ";
+    const dataToExport = {
+      user: userName,
+      exportedAt: new Date().toISOString(),
+      reflections: reflections,
+      futureLetters: futureLetters.map(l => ({
+        ...l,
+        content: isLetterUnlocked(l.unlockDate) ? l.content : "[SEALED_LETTER_LOCKED]"
+      }))
+    };
+
+    const jsonStr = JSON.stringify(dataToExport, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `CoreZ_Journal_Data.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setToastMessage("Đã tải tệp .json cấu trúc dữ liệu thành công! 📂");
+  };
+
+  const handleCopySummary = () => {
+    const userName = userData.name || "Bạn nhỏ CoreZ";
+    let summary = `🌱 TÓM TẮT NHẬT KÝ COREZ (${userName})\n`;
+    summary += `• Tổng bài phản tư: ${reflections.length}\n`;
+    summary += `• Tổng thư tương lai: ${futureLetters.length}\n\n`;
+
+    if (reflections.length > 0) {
+      summary += `📝 GHI CHÉP PHẢN TƯ MỚI NHẤT:\n`;
+      const last = reflections[0];
+      summary += `[${last.date}] Q: ${last.promptText}\n-> ${last.answerText}\n\n`;
+    }
+
+    summary += `✨ Lưu giữ góc nhỏ bình yên trên CoreZ.`;
+
+    navigator.clipboard.writeText(summary);
+    setCopiedSummary(true);
+    setTimeout(() => setCopiedSummary(false), 2000);
+    setToastMessage("Đã sao chép tóm tắt nhật ký vào bộ nhớ tạm! 📋");
+  };
+
+  // Healing Quote state
+  const [currentQuote, setCurrentQuote] = useState<HealingQuote | null>(null);
+
+  useEffect(() => {
+    // Select random healing quote on mount to provide instant inspiration
+    if (HEALING_QUOTES.length > 0) {
+      const randIdx = Math.floor(Math.random() * HEALING_QUOTES.length);
+      setCurrentQuote(HEALING_QUOTES[randIdx]);
+    }
+  }, []);
+
+  const handleRandomizeQuote = () => {
+    if (HEALING_QUOTES.length <= 1) return;
+    let nextIdx = Math.floor(Math.random() * HEALING_QUOTES.length);
+    if (currentQuote) {
+      while (HEALING_QUOTES[nextIdx].id === currentQuote.id) {
+        nextIdx = Math.floor(Math.random() * HEALING_QUOTES.length);
+      }
+    }
+    setCurrentQuote(HEALING_QUOTES[nextIdx]);
+  };
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    // Select random prompt on start
+    setCurrentPromptIdx(Math.floor(Math.random() * DAILY_PROMPTS.length));
+  }, []);
+
+  // Toast auto-clear
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
+  const handleNextPrompt = () => {
+    let nextIdx = currentPromptIdx;
+    while (nextIdx === currentPromptIdx && DAILY_PROMPTS.length > 1) {
+      nextIdx = Math.floor(Math.random() * DAILY_PROMPTS.length);
+    }
+    setCurrentPromptIdx(nextIdx);
+  };
+
+  const handleSubmitReflection = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reflectionInput.trim()) return;
+
+    const newLog: ReflectionLog = {
+      id: `ref-${Date.now()}`,
+      date: new Date().toLocaleDateString("vi-VN", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }),
+      promptText: DAILY_PROMPTS[currentPromptIdx].text,
+      answerText: reflectionInput
+    };
+
+    addReflection(newLog);
+    addXP(15); // reward for reflection
+    setReflectionInput("");
+    showToast("Ghi nhận phản tư! 🌱", "Bài phản tư đã được lưu thành công vào góc nhỏ của cậu (+15 Karma XP)", { type: "karma", icon: "✍️" });
+    setToastMessage("Ghi nhận nhật ký phản tư thành công! (+15 karmaXP) 🌱");
+  };
+
+  const handleDeleteReflectionClick = (id: string) => {
+    setDeleteTargetId(id);
+    setDeleteType("reflection");
+  };
+
+  const handleDeleteLetterClick = (id: string) => {
+    setDeleteTargetId(id);
+    setDeleteType("letter");
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTargetId || !deleteType) return;
+    
+    if (deleteType === "reflection") {
+      deleteReflection(deleteTargetId);
+      setToastMessage("Đã xóa nhật ký thành công! 🍃");
+    } else {
+      deleteFutureLetter(deleteTargetId);
+      setToastMessage("Đã xóa lá thư thời gian thành công! 🍃");
+    }
+    
+    setDeleteTargetId(null);
+    setDeleteType(null);
+  };
+
+  const handleSealLetter = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!letterContent.trim()) return;
+
+    setIsSealing(true);
+
+    // Simulate beeswax sealing animation delay
+    setTimeout(() => {
+      const writeDate = new Date();
+      const unlockDate = new Date();
+      const days = parseInt(releaseTimeline);
+      unlockDate.setDate(writeDate.getDate() + days);
+
+      const timelineLabels: Record<string, string> = {
+        "2": "2 Ngày Sau",
+        "4": "4 Ngày Sau",
+        "5": "5 Ngày Sau",
+        "7": "7 Ngày Sau",
+        "10": "10 Ngày Sau",
+        "15": "15 Ngày Sau",
+        "30": "30 Ngày Sau"
+      };
+
+      const newLetter: FutureLetter = {
+        id: `let-${Date.now()}`,
+        writeDate: writeDate.toLocaleDateString("vi-VN"),
+        unlockDate: unlockDate.toISOString(),
+        content: letterContent,
+        releaseTimelineLabel: timelineLabels[releaseTimeline] || `${releaseTimeline} Ngày Sau`,
+        isSealed: true
+      };
+
+      addFutureLetter(newLetter);
+      addXP(30); // reward for sealing a future letter
+      setLetterContent("");
+      setIsSealing(false);
+      showToast("Niêm phong thư tương lai! ✉️", "Lá thư đã được phủ sáp ong bảo vệ thành công (+30 Karma XP)", { type: "achievement", icon: "✉️" });
+      setToastMessage("Đã niêm phong thư bằng sáp ong thành công! (+30 karmaXP) ✉️");
+    }, 2200);
+  };
+
+  // Check if letter is unlocked
+  const isLetterUnlocked = (unlockDateStr: string) => {
+    const unlock = new Date(unlockDateStr);
+    return new Date() >= unlock;
+  };
+
+  // Format countdown
+  const getLetterCountdown = (unlockDateStr: string) => {
+    const unlock = new Date(unlockDateStr);
+    const diffMs = unlock.getTime() - new Date().getTime();
+    if (diffMs <= 0) return "Sẵn sàng đọc";
+
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHrs = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    
+    if (diffDays > 0) {
+      return `Mở khóa sau ${diffDays} ngày ${diffHrs} giờ`;
+    }
+    return `Mở khóa sau ${diffHrs} giờ`;
+  };
+
+  return (
+    <div className="w-full max-w-4xl mx-auto py-2 px-4 font-sans relative z-10" id="journaling-module">
+      
+      {/* Healing Quote Inspiration Banner */}
+      {currentQuote && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="mb-6 p-5 rounded-[24px] bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-transparent border border-emerald-500/20 backdrop-blur-md relative overflow-hidden group shadow-sm text-left"
+        >
+          {/* Subtle decorative quote marks background */}
+          <div className="absolute right-4 top-2 text-7xl font-serif text-emerald-500/5 select-none pointer-events-none font-black leading-none">
+            “
+          </div>
+
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 relative z-10">
+            <div className="space-y-2 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-bold tracking-wider text-emerald-600 bg-emerald-100/60 dark:bg-emerald-950/40 dark:text-emerald-300 px-2.5 py-0.5 rounded-full uppercase border border-emerald-500/10">
+                  {currentQuote.category}
+                </span>
+                <span className="text-[10px] text-emerald-500 font-semibold flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-emerald-500 animate-pulse" />
+                  Cảm hứng phản tư tức thì
+                </span>
+              </div>
+              <p className="font-serif text-sm sm:text-base font-bold text-slate-800 dark:text-emerald-50 leading-relaxed italic">
+                “{currentQuote.text}”
+              </p>
+              <p className="text-xs text-slate-400 font-mono font-medium">
+                — {currentQuote.author}
+              </p>
+            </div>
+
+            <button
+              onClick={handleRandomizeQuote}
+              className="px-3 py-1.5 bg-white/70 hover:bg-white dark:bg-slate-800/60 dark:hover:bg-slate-850 border border-emerald-500/10 rounded-xl text-[10.5px] font-bold text-emerald-600 dark:text-emerald-400 shadow-sm transition-all flex items-center gap-1.5 cursor-pointer select-none active:scale-95 whitespace-nowrap"
+              title="Đổi trích dẫn chữa lành khác"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Tìm cảm hứng khác</span>
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Sub tabs header & Export Action */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6">
+        <div className="bg-white/40 border border-white/40 backdrop-blur-md p-1.5 rounded-2xl flex gap-1 shadow-sm">
+          <button
+            onClick={() => setActiveTab("daily")}
+            className={`px-5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "daily"
+                ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            Nhật Ký Phản Tư Hàng Ngày
+          </button>
+          <button
+            onClick={() => setActiveTab("future")}
+            className={`px-5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "future"
+                ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <Mail className="w-4 h-4" />
+            Lá Thư Tương Lai (Time Capsule)
+          </button>
+        </div>
+
+        {/* Export Action Buttons */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={handleExportPdf}
+            className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold text-xs rounded-2xl shadow-md transition-all flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 shrink-0"
+            title="Xuất nhật ký thành tệp PDF đẹp mắt để in hoặc lưu trữ"
+          >
+            <FileText className="w-4 h-4 text-emerald-100" />
+            <span>Xuất nhật ký thành PDF 📄</span>
+          </button>
+
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="px-3.5 py-2 bg-white/80 hover:bg-white dark:bg-slate-800/80 dark:hover:bg-slate-800 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold text-xs rounded-2xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer hover:scale-105 active:scale-95 shrink-0"
+            title="Xem thêm tùy chọn xuất dữ liệu (.txt, .json)"
+          >
+            <Download className="w-4 h-4 text-emerald-500" />
+            <span>Khác 📂</span>
+          </button>
+        </div>
+      </div>
+
+      <AnimatePresence mode="wait">
+        
+        {/* TAB 1: DAILY REFLECTIVE PROMPTS */}
+        {activeTab === "daily" && (
+          <motion.div
+            key="daily-prompt-tab"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch"
+          >
+            {/* Input Column - 7 Cols */}
+            <div className="md:col-span-7 bg-white/65 backdrop-blur-xl rounded-[32px] border border-white/40 p-5 sm:p-6 shadow-sm flex flex-col justify-between space-y-5">
+              
+              <div className="space-y-1 border-b border-white/30 pb-3">
+                <span className="text-[10px] font-bold tracking-wider text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full uppercase">
+                  Daily Prompt
+                </span>
+                <h3 className="font-serif text-base sm:text-lg font-bold text-slate-800">
+                  Phản Tư Độc Bản Ngày Hôm Nay
+                </h3>
+                <p className="text-[11px] text-slate-400 font-light">
+                  Mỗi ngày là một gợi ý phản tư khác nhau giúp cậu tập trung vào vẻ đẹp mộc mạc đời thực và xoa dịu những so sánh vụn vặt trên internet.
+                </p>
+              </div>
+
+              {/* Dynamic Prompt Selector Box */}
+              <div className="bg-emerald-50/50 rounded-2xl p-4.5 border border-emerald-100/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="space-y-1 text-left flex-1">
+                  <span className="text-[9px] font-mono font-black text-emerald-600 tracking-wider uppercase block">Câu hỏi gợi mở tâm hồn</span>
+                  <h4 className="font-serif text-sm sm:text-base font-bold text-emerald-950 leading-relaxed">
+                    “{DAILY_PROMPTS[currentPromptIdx].text}”
+                  </h4>
+                </div>
+                <button
+                  onClick={handleNextPrompt}
+                  className="p-2 bg-white text-emerald-600 rounded-xl hover:bg-emerald-50 border border-emerald-100 shadow-sm transition-all cursor-pointer shrink-0"
+                  title="Thay đổi câu hỏi gợi ý"
+                >
+                  <RefreshCw className="w-4 h-4 text-emerald-500 animate-spin-slow" />
+                </button>
+              </div>
+
+              {/* Journal Form */}
+              <form onSubmit={handleSubmitReflection} className="space-y-4 flex-1 flex flex-col justify-between">
+                <div className="space-y-1.5 flex-1">
+                  <label className="text-[10.5px] font-bold text-slate-500 uppercase font-mono block">Nội dung phản tư của cậu</label>
+                  <textarea
+                    rows={6}
+                    placeholder="Hãy viết thật chậm, mộc mạc và chân thực nhất những suy nghĩ ẩn sâu trong cậu ngày hôm nay... Ở CoreZ, không ai phán xét cậu cả."
+                    value={reflectionInput}
+                    onChange={(e) => setReflectionInput(e.target.value)}
+                    className="w-full p-4 rounded-2xl border border-white/40 focus:outline-none focus:border-emerald-500 text-xs sm:text-sm bg-white/50 placeholder:text-slate-400 shadow-inner resize-none flex-1 min-h-[140px]"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center gap-4">
+                  <div className="text-[10px] text-slate-400 italic">
+                    *Mỗi ghi chép của cậu được bảo mật tối đa trên trình duyệt này.
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!reflectionInput.trim()}
+                    className={`px-5 py-2.5 rounded-xl font-bold text-xs text-white shadow transition-all active:scale-95 flex items-center gap-1.5 shrink-0 ${
+                      reflectionInput.trim()
+                        ? "bg-emerald-500 hover:bg-emerald-600 cursor-pointer shadow-md shadow-emerald-200"
+                        : "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
+                    }`}
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    Lưu Trang Nhật Ký
+                  </button>
+                </div>
+              </form>
+
+            </div>
+
+            {/* Reflections Log Column - 5 Cols */}
+            <div className="md:col-span-5 bg-white/65 backdrop-blur-xl rounded-[32px] border border-white/40 p-5 shadow-sm flex flex-col justify-between h-[450px]">
+              
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Bookmark className="w-4 h-4 text-emerald-500" />
+                  Ký Ức Phản Tư Của Cậu ({reflections.length})
+                </h4>
+                <span className="text-[9.5px] text-slate-400 font-mono">Lịch sử ghi chép</span>
+              </div>
+
+              {/* Log list */}
+              <div className="flex-1 overflow-y-auto space-y-3.5 my-3 pr-1.5">
+                {reflections.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center space-y-2 p-4">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-300">
+                      📖
+                    </div>
+                    <p className="text-[11px] text-slate-400 max-w-[180px] font-light leading-relaxed">
+                      Sổ tay đang trống trơn. Hãy ghi nhận dòng phản tư đầu tiên để khởi đầu hành trình sạc pin tâm hồn cậu nhé!
+                    </p>
+                  </div>
+                ) : (
+                  reflections.map((log) => (
+                    <div
+                      key={log.id}
+                      className="p-3 bg-white/40 border border-white/30 rounded-xl space-y-2 relative group hover:border-slate-300 transition-all shadow-inner"
+                    >
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono font-medium">
+                          <Calendar className="w-3 h-3" />
+                          <span>{log.date}</span>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteReflectionClick(log.id)}
+                          className="text-slate-300 hover:text-rose-500 p-0.5 rounded transition-colors opacity-0 group-hover:opacity-100 absolute top-2.5 right-2.5 cursor-pointer"
+                          title="Xóa dòng nhật ký này"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-1">
+                        <h5 className="text-[10.5px] font-bold text-emerald-800 leading-snug">
+                          Q: {log.promptText}
+                        </h5>
+                        <p className="text-[11px] text-slate-600 leading-relaxed whitespace-pre-wrap font-light text-justify">
+                          {log.answerText}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Quote footer */}
+              <div className="pt-2 text-center text-[9px] text-slate-400 font-light border-t border-slate-150/40 italic">
+                “Viết lách mộc mạc chính là một liều thuốc lọc bỏ bớt bụi bặm cho tâm hồn.” 🌱
+              </div>
+
+            </div>
+          </motion.div>
+        )}
+
+        {/* TAB 2: FUTURE TIME CAPSULE LETTERS */}
+        {activeTab === "future" && (
+          <motion.div
+            key="future-letter-tab"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch"
+          >
+            {/* Input Column - 7 Cols */}
+            <div className="md:col-span-7 bg-white/65 backdrop-blur-xl rounded-[32px] border border-white/40 p-5 sm:p-6 shadow-sm flex flex-col justify-between space-y-5 relative">
+              
+              {/* Beeswax sealing overlay animation */}
+              <AnimatePresence>
+                {isSealing && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 bg-white/95 backdrop-blur-md rounded-[32px] z-30 flex flex-col items-center justify-center p-6 text-center space-y-4"
+                  >
+                    <motion.div
+                      animate={{ scale: [1, 1.15, 1], rotate: [0, 10, -10, 0] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                      className="text-5xl"
+                    >
+                      ✉️
+                    </motion.div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-serif text-base font-bold text-slate-800 animate-pulse">
+                        Đang niêm phong thư bằng sáp ong...
+                      </h4>
+                      <p className="text-xs text-slate-400 font-light max-w-xs mx-auto leading-relaxed">
+                        Thư của cậu đang được bọc sáp, đóng dấu mộc CoreZ và gửi vào lồng kính thời gian. Xin hãy đợi trong giây lát...
+                      </p>
+                    </div>
+                    {/* Tiny animated spinner */}
+                    <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="space-y-1 border-b border-white/30 pb-3">
+                <span className="text-[10px] font-bold tracking-wider text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full uppercase">
+                  Time Capsule
+                </span>
+                <h3 className="font-serif text-base sm:text-lg font-bold text-slate-800">
+                  Lá Thư Gửi Tương Lai (Bản Ngã Khóa Sáp)
+                </h3>
+                <p className="text-[11px] text-slate-400 font-light">
+                  Hãy viết một lá thư tâm sự cho chính bản thân của tương lai. Chọn mốc thời gian khóa sáp và lá thư sẽ hoàn toàn bí mật cho tới đúng ngày được phép mở khóa.
+                </p>
+              </div>
+
+              {/* Future Letter Form */}
+              <form onSubmit={handleSealLetter} className="space-y-4 flex-1 flex flex-col justify-between">
+                
+                {/* Timeline Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase font-mono block">Cậu muốn khóa thư này trong bao lâu?</label>
+                  <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+                    {[
+                      { value: "2", label: "2 ngày" },
+                      { value: "4", label: "4 ngày" },
+                      { value: "5", label: "5 ngày" },
+                      { value: "7", label: "7 ngày" },
+                      { value: "10", label: "10 ngày" },
+                      { value: "15", label: "15 ngày" },
+                      { value: "30", label: "30 ngày" }
+                    ].map((time) => (
+                      <button
+                        key={time.value}
+                        type="button"
+                        onClick={() => setReleaseTimeline(time.value)}
+                        className={`py-2 px-1 rounded-xl text-[10px] font-bold border transition-all text-center cursor-pointer ${
+                          releaseTimeline === time.value
+                            ? "bg-emerald-500 border-emerald-500 text-white shadow-sm ring-2 ring-emerald-300"
+                            : "bg-white/40 border-white/30 text-slate-600 hover:bg-white/60"
+                        }`}
+                      >
+                        {time.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 flex-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase font-mono block">Viết thư cho tương lai của chính mình</label>
+                  <textarea
+                    rows={5}
+                    placeholder="Chào tôi ở tương lai ơi, bạn thế nào rồi? Áp lực thi cử đã vơi đi chưa? Bạn đã chinh phục được đỉnh Phai Vệ chưa? Gửi gắm những câu hỏi, trăn trở, niềm hy vọng của tôi lúc này cho bạn nhé..."
+                    value={letterContent}
+                    onChange={(e) => setLetterContent(e.target.value)}
+                    className="w-full p-4 rounded-2xl border border-white/40 focus:outline-none focus:border-emerald-500 text-xs sm:text-sm bg-white/50 placeholder:text-slate-400 shadow-inner resize-none flex-1 min-h-[140px]"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center gap-4">
+                  <div className="text-[10px] text-slate-400 italic">
+                    *Mỗi lá thư được lưu bảo mật cục bộ, không gửi lên bất kỳ máy chủ nào.
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!letterContent.trim() || isSealing}
+                    className={`px-5 py-2.5 rounded-xl font-bold text-xs text-white shadow transition-all active:scale-95 flex items-center gap-1.5 shrink-0 ${
+                      letterContent.trim() && !isSealing
+                        ? "bg-slate-800 hover:bg-slate-900 cursor-pointer shadow"
+                        : "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
+                    }`}
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    Niêm Phong Thư (Seal Letter)
+                  </button>
+                </div>
+
+              </form>
+
+            </div>
+
+            {/* Locked Letters Column - 5 Cols */}
+            <div className="md:col-span-5 bg-white/65 backdrop-blur-xl rounded-[32px] border border-white/40 p-5 shadow-sm flex flex-col justify-between h-[450px]">
+              
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Mail className="w-4 h-4 text-emerald-500 animate-pulse" />
+                  Hòm Thư Thời Gian ({futureLetters.length})
+                </h4>
+                <span className="text-[9.5px] text-slate-400 font-mono">Hòm lưu trữ sáp</span>
+              </div>
+
+              {/* Letter archive list */}
+              <div className="flex-1 overflow-y-auto space-y-3 my-3 pr-1">
+                {futureLetters.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center space-y-2 p-4">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-300">
+                      ✉️
+                    </div>
+                    <p className="text-[11px] text-slate-400 max-w-[180px] font-light leading-relaxed">
+                      Chưa có bức thư thời gian nào. Hãy gửi gắm những lời nhắn nhủ thầm kín cho chính mình sau này nhé!
+                    </p>
+                  </div>
+                ) : (
+                  futureLetters.map((letter) => {
+                    const unlocked = isLetterUnlocked(letter.unlockDate);
+                    return (
+                      <div
+                        key={letter.id}
+                        className={`p-3 rounded-xl border relative group transition-all shadow-inner ${
+                          unlocked 
+                            ? "bg-emerald-50/20 border-emerald-200" 
+                            : "bg-slate-50 border-slate-200"
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-2.5">
+                          <div className="flex items-center gap-1 text-[9px] text-slate-400 font-mono">
+                            <Calendar className="w-2.5 h-2.5" />
+                            <span>Gửi ngày: {letter.writeDate}</span>
+                          </div>
+                          
+                          <button
+                            onClick={() => handleDeleteLetterClick(letter.id)}
+                            className="text-slate-300 hover:text-rose-500 p-0.5 rounded transition-colors opacity-0 group-hover:opacity-100 absolute top-2 right-2 cursor-pointer"
+                            title="Xóa bức thư này"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Lock / Unlock display status */}
+                        <div className="mt-2.5 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-1 rounded-lg shrink-0 ${
+                              unlocked ? "bg-emerald-100 text-emerald-600" : "bg-slate-200 text-slate-400"
+                            }`}>
+                              {unlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                            </div>
+                            <div className="text-left">
+                              <h5 className="text-[10.5px] font-bold text-slate-800 leading-none">
+                                Gửi cho tôi của {letter.releaseTimelineLabel}
+                              </h5>
+                              <p className="text-[9.5px] text-slate-400 font-mono mt-0.5 leading-none">
+                                {unlocked ? "Đã sẵn sàng đọc" : getLetterCountdown(letter.unlockDate)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Content readable only when unlocked */}
+                          {unlocked ? (
+                            <div className="bg-white p-2.5 rounded-lg border border-emerald-100/50 mt-1">
+                              <p className="text-[11px] text-slate-600 leading-relaxed text-justify whitespace-pre-wrap font-light">
+                                {letter.content}
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="bg-slate-100/70 py-2 px-3 rounded-lg border border-slate-150/50 text-center mt-1">
+                              <span className="text-[9.5px] text-slate-400 font-medium tracking-tight">
+                                🔒 Thư đã khóa sáp ong • Nội dung được bảo vệ tuyệt đối
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Footer text */}
+              <div className="pt-2 text-center text-[9px] text-slate-400 font-light border-t border-slate-150/40">
+                *Thời gian trôi rất nhanh, tớ sẽ bảo vệ hòm thư này cho tới đúng ngày hẹn. 🧭
+              </div>
+
+            </div>
+          </motion.div>
+        )}
+
+      </AnimatePresence>
+
+      {/* Export & Download Journal Modal */}
+      <AnimatePresence>
+        {showExportModal && (
+          <div 
+            onClick={() => setShowExportModal(false)}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[110] flex items-center justify-center p-4 cursor-pointer"
+          >
+            <motion.div
+              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-md bg-white dark:bg-[#1f2520] border border-slate-200 dark:border-[#a0a8a3]/20 rounded-[32px] p-6 shadow-2xl relative overflow-hidden space-y-5 text-slate-800 dark:text-[#e0e6e2] cursor-default"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/10 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-2xl">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-serif text-base font-bold text-slate-800 dark:text-emerald-50">
+                      Xuất & Lưu Trữ Nhật Ký 📂
+                    </h4>
+                    <p className="text-[10.5px] text-slate-400 font-mono">Quyền sở hữu thuộc về cậu</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowExportModal(false)}
+                  className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-white/10 text-slate-400 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-600 dark:text-[#a0a8a3] leading-relaxed">
+                Tất cả các dòng phản tư và lá thư thời gian đều được lưu trực tiếp trên thiết bị của cậu. Hãy tải về để lưu giữ góc tâm hồn mộc mạc này bất cứ lúc nào!
+              </p>
+
+              {/* Stats Overview */}
+              <div className="grid grid-cols-2 gap-2.5 p-3 rounded-2xl bg-slate-50 dark:bg-[#1a201b]/60 border border-slate-100 dark:border-white/5 text-center">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bài phản tư đã lưu</p>
+                  <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">{reflections.length}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Thư gửi tương lai</p>
+                  <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">{futureLetters.length}</p>
+                </div>
+              </div>
+
+              {/* Export Options */}
+              <div className="space-y-3">
+                
+                {/* 0. PDF Export */}
+                <div className="p-3.5 rounded-2xl border-2 border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20 flex items-center justify-between gap-3 hover:border-emerald-500 transition-all">
+                  <div className="space-y-0.5 flex-1">
+                    <div className="flex items-center gap-1.5 font-extrabold text-xs text-emerald-800 dark:text-emerald-300">
+                      <FileText className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span>Xuất File PDF (.pdf) 🌟</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 dark:text-[#a0a8a3] leading-normal">
+                      Bản trình bày đẹp mắt, phân trang chuẩn mực, sẵn sàng in hoặc đọc trên mọi thiết bị.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      handleExportPdf();
+                      setShowExportModal(false);
+                    }}
+                    className="px-3.5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Tải PDF
+                  </button>
+                </div>
+
+                {/* 1. TXT Export */}
+                <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-white/10 bg-white/50 dark:bg-black/20 flex items-center justify-between gap-3 hover:border-emerald-500/50 transition-all">
+                  <div className="space-y-0.5 flex-1">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800 dark:text-emerald-100">
+                      <FileText className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span>Tải Tệp Văn Bản (.txt)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      Định dạng văn bản mộc mạc, dễ đọc trên máy tính và điện thoại.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      handleExportTxt();
+                      setShowExportModal(false);
+                    }}
+                    className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Tải .txt
+                  </button>
+                </div>
+
+                {/* 2. JSON Export */}
+                <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-white/10 bg-white/50 dark:bg-black/20 flex items-center justify-between gap-3 hover:border-emerald-500/50 transition-all">
+                  <div className="space-y-0.5 flex-1">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800 dark:text-emerald-100">
+                      <FileDown className="w-4 h-4 text-teal-500 shrink-0" />
+                      <span>Tải Cấu Trúc Dữ Liệu (.json)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      File dữ liệu chuẩn để sao lưu dự phòng toàn bộ nhật ký.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      handleExportJson();
+                      setShowExportModal(false);
+                    }}
+                    className="px-3.5 py-2 bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Tải .json
+                  </button>
+                </div>
+
+                {/* 3. Quick Copy Summary */}
+                <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-white/10 bg-white/50 dark:bg-black/20 flex items-center justify-between gap-3 hover:border-emerald-500/50 transition-all">
+                  <div className="space-y-0.5 flex-1">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800 dark:text-emerald-100">
+                      <Copy className="w-4 h-4 text-indigo-500 shrink-0" />
+                      <span>Sao Chép Tóm Tắt</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      Sao chép nội dung bài phản tư gần nhất vào khay nhớ tạm.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleCopySummary}
+                    className="px-3.5 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
+                  >
+                    {copiedSummary ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-indigo-500" />}
+                    {copiedSummary ? "Đã chép!" : "Sao chép"}
+                  </button>
+                </div>
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-2 text-center text-[10px] text-slate-400 italic border-t border-slate-100 dark:border-white/5">
+                "Mỗi từ ngữ cậu viết ra đều là một điểm tựa chữa lành mộc mạc." 🌿
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Deletion Modal */}
+      <AnimatePresence>
+        {deleteTargetId && (
+          <div 
+            onClick={() => {
+              setDeleteTargetId(null);
+              setDeleteType(null);
+            }}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[110] flex items-center justify-center p-4 cursor-pointer"
+          >
+            <motion.div
+              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-sm bg-white/90 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 backdrop-blur-xl rounded-[28px] p-6 shadow-2xl relative overflow-hidden cursor-default"
+            >
+              <div className="flex items-center gap-2 border-b border-slate-100/30 pb-3 mb-4">
+                <div className="p-2 bg-rose-50 dark:bg-rose-950/40 text-rose-500 rounded-xl">
+                  <Trash2 className="w-5 h-5 animate-pulse" />
+                </div>
+                <h4 className="font-serif text-sm font-bold text-slate-800 dark:text-slate-100">Xác nhận xóa</h4>
+              </div>
+
+              <p className="text-xs text-slate-500 dark:text-slate-300 leading-relaxed mb-5">
+                {deleteType === "reflection" 
+                  ? "Cậu có chắc chắn muốn xóa nhật ký của ngày này không? Hành động này không thể hoàn tác."
+                  : "Cậu có chắc chắn muốn xóa lá thư thời gian này không? Hành động này không thể hoàn tác."}
+              </p>
+
+              <div className="flex gap-2.5 w-full">
+                <button
+                  onClick={() => {
+                    setDeleteTargetId(null);
+                    setDeleteType(null);
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs transition-colors cursor-pointer"
+                >
+                  Xác nhận xóa
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating Toast Notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 40, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className="fixed bottom-6 right-6 bg-slate-900/90 dark:bg-slate-850/95 border border-white/10 text-white px-4 py-3 rounded-2xl shadow-2xl backdrop-blur-xl z-[120] flex items-center gap-2 text-xs font-semibold"
+          >
+            <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
+}
